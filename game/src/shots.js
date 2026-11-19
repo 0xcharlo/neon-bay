@@ -1,79 +1,102 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Neon Bay — staging for screenshots. Opening the game with ?shot=<name>
+// arranges a live scene that shows the game at its best: a police chase,
+// the city on foot, a mission escape, or the title screen. The scene keeps
+// playing after staging, so a screenshot taken a second later is a genuine
+// render of the running game.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { LANDMARKS } from './city.js';
+import { spawnPoliceCar, makeCar } from './vehicles.js';
+import { addWanted } from './police.js';
+import { enterCar } from './player.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
+export function stageShot(g, name) {
+  const { player, police, missions, cars, rng, peds } = g;
+
+  // Clear pedestrians from the road the staged car will drive down, so
+  // the chase shot is not interrupted by a run-over during the settle.
+  function clearRoadPeds(x0, x1, y0, y1) {
+    for (let i = peds.length - 1; i >= 0; i--) {
+      const p = peds[i];
+      if (p.x > x0 && p.x < x1 && p.y > y0 && p.y < y1) peds.splice(i, 1);
     }
   }
-  return Infinity;
-}
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+  if (name === 'title') {
+    g.state = 'title';
+    return;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
+
+  g.state = 'playing';
+
+  if (name === 'cover') {
+    // Driving down the main avenue with three stars and two police cars
+    // closing in — the chase, the HUD and the minimap all in one frame.
+    // autoDrive keeps the car moving down the road while the shot settles.
+    const car = makeCar({
+      kind: 'player', x: 1600, y: 1000, angle: 0,
+      speed: 300, maxSpeed: 430, color: '#d94f3d', hp: 100,
+    });
+    cars.push(car);
+    enterCar(player, car);
+    g.autoDrive = true;
+    clearRoadPeds(1600, 2800, 920, 1080);
+    player.cash = 2450;
+    player.ammo = 24;
+    missions.index = 1;
+    missions.step = 0;
+    addWanted(police, 3);
+    for (let i = 0; i < 2; i++) {
+      const pc = spawnPoliceCar(rng, player.x, player.y);
+      pc.x = player.x - 260 - i * 130;
+      pc.y = 1000 + (i === 0 ? -30 : 30);
+      pc.angle = 0;
+      pc.speed = 280;
+      police.cars.push(pc);
     }
+    return;
   }
-  return best;
-}
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  if (name === 'street') {
+    // On foot at Bay Plaza: pedestrians, traffic and the marina marker on
+    // the minimap, with the second job waiting.
+    player.x = LANDMARKS.plaza.x;
+    player.y = LANDMARKS.plaza.y + 130;
+    player.cash = 500;
+    missions.index = 1;
+    missions.step = 0;
+    missions.toast = 'Lena: the package is waiting at the Marina.';
+    missions.toastT = 6;
+    return;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+
+  if (name === 'mission') {
+    // The bank job escape: vault cracked, four stars, the whole force
+    // coming, racing south past Bay Trust Bank for the Hideout.
+    const car = makeCar({
+      kind: 'player', x: 2200, y: 500, angle: Math.PI / 2,
+      speed: 320, maxSpeed: 430, color: '#3d7dd9', hp: 100,
+    });
+    cars.push(car);
+    enterCar(player, car);
+    g.autoDrive = true;
+    clearRoadPeds(2120, 2280, 400, 1500);
+    player.cash = 5450;
+    missions.index = 2;
+    missions.step = 2;
+    addWanted(police, 4);
+    for (let i = 0; i < 3; i++) {
+      const pc = spawnPoliceCar(rng, player.x, player.y);
+      pc.x = 2200;
+      pc.y = 340 - i * 120;
+      pc.angle = Math.PI / 2;
+      pc.speed = 300;
+      police.cars.push(pc);
+    }
+    missions.toast = 'Vault open! Lose the police at the Hideout!';
+    missions.toastT = 6;
+    return;
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+
+  // Unknown shot name: just play from the title.
+  g.state = 'title';
 }

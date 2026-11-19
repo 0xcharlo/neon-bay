@@ -11,6 +11,10 @@
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+//
+// Neon Bay: this entry hands in the open-world game in game/ (a coastal
+// city, traffic, pedestrians, wanted level, story missions) and the four
+// real browser renders in screenshots/; the plumbing below is unchanged.
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
